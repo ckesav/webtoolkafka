@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html
+    xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+    xmlns:sec="http://www.thymeleaf.org/thymeleaf-extras-springsecurity4"
+    xmlns:th="http://www.thymeleaf.org"
+    layout:decorate="~{layout}">
+
+<head>
+    <title>Cluster Explorer</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+
+<body>
+<section layout:fragment="content">
+    <div class="container">
+        <script type="application/javascript">
+            // Maintains state of our consumer
+            var ClusterInfo = {
+                clusterId: '[[${cluster.id}]]',
+
+                // Cached copy of topics for client side searching
+                cachedTopics: [],
+
+                // Cached copy of consumers for client side searching
+                cachedConsumers: [],
+
+                // Cached copy of brokers for lcient side searching
+                cachedBrokers: [],
+
+                // Handle cluster node results ajax result
+                handleClusterNodeResults: function(results) {
+                    ClusterInfo.cachedBrokers = results;
+                    ClusterInfo.displayClusterNodes();
+                },
+                displayClusterNodes: function() {
+                    // Get our search text
+                    var searchStr = jQuery("#brokerSearch").val();
+                    var matchedEntries = 0;
+
+                    // Clear nodes table
+                    var table = jQuery('#nodes-tbody');
+                    jQuery(table).empty();
+
+                    // Get and compile template
+                    var source   = jQuery('#nodes-template').html();
+                    var template = Handlebars.compile(source);
+
+                    jQuery.each(ClusterInfo.cachedBrokers, function(index, result) {
+                        // Filter
+                        if (!SearchTools.doesMatchText(searchStr, result.host + ":" + result.port)) {
+                            // Skip
+                            return;
+                        }
+                        matchedEntries++;
+
+                        // Generate html from template
+                        var properties = {
+                            clusterId: ClusterInfo.clusterId,
+                            id: result.id,
+                            host: result.host,
+                            port: result.port,
+                            rack: result.rack
+                        };
+                        var resultHtml = template(properties);
+
+                        // Append it to our table
+                        jQuery(table).append(resultHtml);
+                    });
+
+                    // Hide loader
+                    jQuery('#nodes-loader').toggle(false);
+
+                    if (matchedEntries === 0) {
+                        jQuery('#nodes-no-results').toggle(true);
+                        jQuery('#nodes-table').toggle(false);
+                    } else {
+                        jQuery('#nodes-no-results').toggle(false);
+                        jQuery('#nodes-table').toggle(true);
+                    }
+                },
+
+                // Handle all topics details results ajax result
+                handleAllTopicsDetails: function(results) {
+                    ClusterInfo.cachedTopics = results;
+                    ClusterInfo.displayTopics();
+                },
+
+                displayTopics : function() {
+                    // Get our search text
+                    var searchStr = jQuery("#topicSearch").val();
+                    var matchedEntries = 0;
+
+                    // Clear topics table
+                    var table = jQuery('#topics-tbody');
+                    jQuery(table).empty();
+
+                    // Get and compile template
+                    var source   = jQuery('#topics-template').html();
+                    var template = Handlebars.compile(source);
+
+                    jQuery.each(ClusterInfo.cachedTopics, function(index, result) {
+                        // Filter
+                        if (!SearchTools.doesMatchText(searchStr, result.name)) {
+                            // Skip
+                            return;
+                        }
+                        matchedEntries++;
+
+                        // Generate html from template
+                        var properties = {
+                            topic: result.name,
+                            encodedTopic: encodeURIComponent(result.name),
+                            clusterId: ClusterInfo.clusterId,
+                            internal: result.internal,
+                            partitions_count: result.partitions.length,
+                            isUnderReplicated: result.underReplicated
+                        };
+                        var resultHtml = template(properties);
+
+                        // Append it to our table
+                        jQuery(table).append(resultHtml);
+                    });
+
+                    // Hide loader
+                    jQuery('#topics-loader').toggle(false);
+
+                    if (matchedEntries === 0) {
+                        jQuery('#topics-no-results').toggle(true);
+                        jQuery('#topics-table').toggle(false);
+                    } else {
+                        jQuery('#topics-no-results').toggle(false);
+                        jQuery('#topics-table').toggle(true);
+                    }
+                },
+
+                // Handle all consumers results ajax result
+                handleAllConsumers: function(results) {
+                    ClusterInfo.cachedConsumers = results;
+                    ClusterInfo.displayConsumers();
+                },
+
+                displayConsumers: function() {
+                    // Get our search text
+                    var searchStr = jQuery("#consumerSearch").val();
+                    var matchedEntries = 0;
+
+                    // Clear consumers table
+                    var table = jQuery('#consumers-tbody');
+                    jQuery(table).empty();
+
+                    // Get and compile template
+                    var source   = jQuery('#consumers-template').html();
+                    var template = Handlebars.compile(source);
+
+                    jQuery.each(ClusterInfo.cachedConsumers, function(index, result) {
+                        // Filter
+                        if (!SearchTools.doesMatchText(searchStr, result.groupId)) {
+                            // Skip
+                            return;
+                        }
+                        matchedEntries++;
+
+                        // Collect unique topics
+                        var topics = [];
+                        jQuery.each(result.members, function(index, member) {
+                            // Loop thru each assignment
+                            jQuery.each(member.assignment, function(index, assigned) {
+                                topics.push(assigned.topic);
+                            });
+                        });
+
+                        var uniqueTopics = topics.filter(function (value, index, self) {
+                            return self.indexOf(value) === index;
+                        });
+
+                        // Generate html from template
+                        var properties = {
+                            id: result.groupId,
+                            encodedId: encodeURIComponent(result.groupId),
+                            topic: uniqueTopics,
+                            state: result.state,
+                            numberOfMembers: result.members.length,
+                            clusterId: ClusterInfo.clusterId
+                        };
+                        var resultHtml = template(properties);
+
+                        // Append it to our table
+                        jQuery(table).append(resultHtml);
+                    });
+
+                    // Hide loader
+                    jQuery('#consumers-loader').toggle(false);
+
+                    if (matchedEntries === 0) {
+                        jQuery('#consumers-no-results').toggle(true);
+                        jQuery('#consumers-table').toggle(false);
+                    } else {
+                        jQuery('#consumers-no-results').toggle(false);
+                        jQuery('#consumers-table').toggle(true);
+                    }
+                },
+
+                loadTopics: function() {
+                    // Fire off request to get topic details
+                    ApiClient.getAllTopicsDetails(ClusterInfo.clusterId, function(results) {
+                        // Handle results
+                        ClusterInfo.handleAllTopicsDetails(results);
+                    });
+                },
+                loadConsumers: function() {
+                    // Fire off request to get consumer details
+                    ApiClient.getAllConsumersWithDetails(ClusterInfo.clusterId, function(results) {
+                        // Handle results
+                        ClusterInfo.handleAllConsumers(results);
+                    });
+                },
+                removeConsumer: function(groupId) {
+                    if (!confirm('Are you sure you want to remove this consumer group?')) {
+                        return;
+                    }
+                    ApiClient.removeConsumer(ClusterInfo.clusterId, groupId, function(result) {
+                        UITools.showSuccess('Successfully remove consumer group.');
+
+                        // Display success
+                        // On success reload consumers
+                        ClusterInfo.loadConsumers();
+                    });
+
+                },
+                // Handle submitting new topic form.
+                createNewTopic: function() {
+                    ApiClient.createTopic(
+                        ClusterInfo.clusterId,
+                        jQuery('#topicName').val(),
+                        jQuery('#topicPartitions').val(),
+                        jQuery('#topicReplicas').val(),
+
+                        // Handle results
+                        function(results) {
+                            // Hide modal
+                            jQuery('#createTopicModal').modal('hide');
+
+                            // Reset form
+                            jQuery('#topicName').val("");
+                            jQuery('#topicPartitions').val(1);
+                            jQuery('#topicReplicas').val(1);
+
+                            // Reload topic listing
+                            UITools.showSuccess("Created topic successfully.");
+
+                            // show notification
+                            ClusterInfo.loadTopics();
+                        }
+                    )
+                },
+                removeTopic : function(topicName) {
+                    // Show modal
+                    jQuery("#removeTopicConfirm").text(topicName);
+                    jQuery('#deleteTopicModal').modal('show');
+                },
+                confirmedRemoveTopic : function() {
+                    // Validate form.
+                    var expectedTopic = jQuery("#removeTopicConfirm").text();
+                    var confirmedTopic = jQuery("#removeTopicConfirmed").val();
+
+                    console.log(expectedTopic + " === " + confirmedTopic);
+
+                    if (expectedTopic !== confirmedTopic) {
+                        alert("Enter the topic you want to remove.")
+                        return false;
+                    }
+
+                    // Hide modal
+                    jQuery('#deleteTopicModal').modal('hide');
+
+                    // Reset form
+                    jQuery('#removeTopicConfirmed').val("");
+                    jQuery("#removeTopicConfirm").text("");
+
+                    ApiClient.removeTopic(
+                        ClusterInfo.clusterId,
+                        expectedTopic,
+                        function(resultMsg) {
+                            UITools.showSuccess('Successfully removed topic.');
+                            ClusterInfo.loadTopics();
+                        }
+                    );
+                }
+            };
+
+            // On load, fire off ajax request to load results.
+            jQuery(document).ready(function() {
+                // Chain initial ajax requests.
+                // Request Cluster Information
+                ApiClient.getClusterNodes(ClusterInfo.clusterId, function(results) {
+                    // Handle results
+                    ClusterInfo.handleClusterNodeResults(results);
+
+                    // Fire off request to get topic details
+                    ClusterInfo.loadTopics();
+
+                    // Fire off request to get consumers
+                    ClusterInfo.loadConsumers();
+                });
+            });
+        </script>
+
+        <!-- Brokers -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa fa-align-justify"></i>
+                        Cluster <strong th:text="${cluster.name}"></strong> Brokers
+
+                        <div class="btn-group float-right" role="group" aria-label="Button group">
+                            <input
+                                th:type="text"
+                                th:id="brokerSearch"
+                                placeholder="Search..."
+                                size="15"
+                                style="padding: 0px;"
+                                onkeyup="ClusterInfo.displayClusterNodes();">
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Display Loader First -->
+                        <div class="alert alert-light" role="alert" id="nodes-loader" style="display: block;">
+                            <div class="progress">
+                                <div
+                                    class="progress-bar progress-bar-striped progress-bar-animated"
+                                    role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"
+                                    style="width: 100%">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- No Results Found -->
+                        <div class="alert alert-light" role="alert" id="nodes-no-results" style="display: none;">
+                            <h4 class="alert-heading">No Brokers Found</h4>
+                            <p>Looks like we couldn't find any brokers!</p>
+                        </div>
+
+                        <!-- Hide Results Table -->
+                        <table class="table table-bordered table-striped table-sm" id="nodes-table" style="display: none;">
+                            <thead>
+                            <tr>
+                                <th>Broker Id</th>
+                                <th>Hostname</th>
+                                <th>Rack</th>
+                            </tr>
+                            </thead>
+                            <tbody id="nodes-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Topics -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa fa-align-justify"></i>
+                        Cluster <strong th:text="${cluster.name}"></strong> Topics
+
+                        <div class="btn-group float-right" role="group" aria-label="Button group">
+                            <input
+                                th:type="text"
+                                th:id="topicSearch"
+                                placeholder="Search..."
+                                size="15"
+                                style="padding: 0px;"
+                                onkeyup="ClusterInfo.displayTopics();">
+                            <a
+                                class="btn btn-sm" href="#" style="padding-bottom: 0;"
+                                data-toggle="modal" data-target="#createTopicModal"
+                                sec:authorize="hasRole('ROLE_ADMIN')">
+                                <i class="icon-settings"></i>
+                                &nbsp;Create new
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Display Loader First -->
+                        <div class="alert alert-light" role="alert" id="topics-loader" style="display: block;">
+                            <div class="progress">
+                                <div
+                                    class="progress-bar progress-bar-striped progress-bar-animated"
+                                    role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"
+                                    style="width: 100%">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- No Results Found -->
+                        <div class="alert alert-light" role="alert" id="topics-no-results" style="display: none;">
+                            <h4 class="alert-heading">No Topics Found</h4>
+                            <p>Looks like we couldn't find any topics!</p>
+                        </div>
+
+                        <!-- Hide Results Table -->
+                        <table class="table table-bordered table-striped table-sm" id="topics-table" style="display: none;">
+                            <thead>
+                            <tr>
+                                <th>Topic</th>
+                                <th>Partitions</th>
+                                <th>Status</th>
+                                <!--<th sec:authorize="hasRole('ROLE_ADMIN')" class="text-right">Action</th>-->
+                            </tr>
+                            </thead>
+                            <tbody id="topics-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Consumer Groups -->
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa fa-align-justify"></i>
+                        Cluster <strong th:text="${cluster.name}"></strong> Consumer Groups
+
+                        <div class="btn-group float-right" role="group" aria-label="Button group">
+                            <input
+                                th:type="text"
+                                th:id="consumerSearch"
+                                placeholder="Search..."
+                                size="15"
+                                style="padding: 0px;"
+                                onkeyup="ClusterInfo.displayConsumers();">
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Display Loader First -->
+                        <div class="alert alert-light" role="alert" id="consumers-loader" style="display: block;">
+                            <div class="progress">
+                                <div
+                                    class="progress-bar progress-bar-striped progress-bar-animated"
+                                    role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"
+                                    style="width: 100%">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- No Results Found -->
+                        <div class="alert alert-light" role="alert" id="consumers-no-results" style="display: none;">
+                            <h4 class="alert-heading">No Consumers Found</h4>
+                            <p>Looks like we couldn't find any consumers!</p>
+                        </div>
+
+                        <!-- Hide Results Table -->
+                        <table class="table table-bordered table-striped table-sm" id="consumers-table" style="display: none;">
+                            <thead>
+                            <tr>
+                                <th>Consumer Group</th>
+                                <th>Topic</th>
+                                <th>State</th>
+                                <th>Members</th>
+                                <th sec:authorize="hasRole('ROLE_ADMIN')" class="text-right">Action</th>
+                            </tr>
+                            </thead>
+                            <tbody id="consumers-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Nodes Template -->
+        <script id="nodes-template" type="text/x-handlebars-template">
+            <tr>
+                <td>
+                    <a th:href="@{/cluster/{{clusterId}}/broker/{{id}}}">{{id}}</a>
+                </td>
+                <td>{{host}}:{{port}}</td>
+                <td>
+                    {{#if rack}}
+                        {{rack}}
+                    {{else}}
+                        <i>none</i>
+                    {{/if}}
+                </td>
+            </tr>
+        </script>
+
+        <!-- Topics Details Template -->
+        <script id="topics-template" type="text/x-handlebars-template">
+            <tr>
+                <td>
+                    <a th:href="@{/cluster/{{clusterId}}/topic/{{encodedTopic}}}">
+                        {{topic}}
+                    </a>
+                </td>
+                <td>{{partitions_count}}</td>
+                <td>
+                    {{#if isUnderReplicated}}
+                        <span class="badge badge-warning">Under Replicated</span>
+                    {{else}}
+                        <span class="badge badge-success">Fully Replicated</span>
+                    {{/if}}
+                    {{#if internal}}
+                        <span class="badge badge-info">Internal topic</span>
+                    {{/if}}
+                </td>
+                <td class="text-right" th:if="${false}" sec:authorize="hasRole('ROLE_ADMIN')">
+                    <div class="dropdown">
+                        <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                            <i class="fa fa-gear"></i>
+                        </button>
+                        <div class="dropdown-menu" aria-labelledby="dropdownMenuButton">
+                            <a class="dropdown-item" onclick="return ClusterInfo.removeTopic('{{topic}}');">
+                                <i class="fa fa-remove"></i>
+                                Delete
+                            </a>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        </script>
+
+        <!-- Topics Details Template -->
+        <script id="consumers-template" type="text/x-handlebars-template">
+            <tr>
+                <td>
+                    <a th:href="@{/cluster/{{clusterId}}/consumer/{{encodedId}}}">
+                        {{id}}
+                    </a>
+                </td>
+                <td>
+                    {{topic}}
+                </td>
+                <td>
+                    {{state}}
+                </td>
+                <td>
+                    {{numberOfMembers}}
+                </td>
+                <td sec:authorize="hasRole('ROLE_ADMIN')" class="text-right">
+                    <div class="dropdown">
+                        <button class="btn btn-secondary btn-sm dropdown-toggle" type="button" id="dropdownMenuButton" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                            Actions
+                        </button>
+                        <div class="dropdown-menu" aria-labelledby="dropdownMenuButton" x-placement="bottom-start" style="position: absolute; transform: translate3d(29px, 31px, 0px); top: 0px; left: 0px; will-change: transform;">
+
+                            <button class="dropdown-item" onclick="ClusterInfo.removeConsumer('{{id}}'); return false;">
+                                <i class="fa fa-remove"></i>
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+        </script>
+
+        <!-- Create topic modal -->
+        <div class="modal fade show" id="createTopicModal" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" style="display: none;" sec:authorize="hasRole('ROLE_ADMIN')">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h4 class="modal-title">Create new topic on [[${cluster.name}]]</h4>
+                        <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">×</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <form method="post" class="form-horizontal">
+
+                            <!-- Name -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="topicName">
+                                    Topic Name
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="topicName" name="name" class="form-control" type="text"
+                                        placeholder="A unique name to identify this topic">
+                                    <div class="invalid-feedback"></div>
+                                </div>
+                            </div>
+
+                            <!-- Partition Count -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="topicPartitions">
+                                    Partitions
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="topicPartitions" name="partitions" class="form-control" type="text"
+                                        placeholder="How many partitions on this topic"
+                                        value="1">
+                                    <div class="invalid-feedback"></div>
+                                </div>
+                            </div>
+
+                            <!-- Partition Count -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="topicReplicas">
+                                    Replication factor
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="topicReplicas" name="resultsPerPartition" class="form-control" type="text"
+                                        placeholder="Number of replicas"
+                                        th:value="1">
+                                    <div class="invalid-feedback"></div>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" type="button" data-dismiss="modal">Close</button>
+                        <button class="btn btn-primary" type="button" onclick="ClusterInfo.createNewTopic();">Create topic</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete topic modal -->
+        <div class="modal fade show" id="deleteTopicModal" tabindex="-1" role="dialog" aria-labelledby="myDeleteModalLabel" style="display: none;" sec:authorize="hasRole('ROLE_ADMIN')">
+            <div class="modal-dialog" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h4 class="modal-title">Confirm topic removal</h4>
+                        <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">×</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="warning">
+                            Deleting a topic is destructive and cannot be un-done!  <br/>
+                            <br/>
+                            To confirm permanently deleting topic <b id="removeTopicConfirm"></b> from cluster <b>[[${cluster.name}]]</b>, type the topic's name
+                            in the form below and click <i>Remove topic</i>.<br/>
+                            <br/>
+                        </div>
+
+                        <form method="post" class="form-horizontal">
+
+                            <!-- Name -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="topicName">
+                                    Confirm topic
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="removeTopicConfirmed" name="name" class="form-control" type="text">
+                                    <div class="invalid-feedback"></div>
+                                </div>
+                            </div>
+
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" type="button" data-dismiss="modal">Close</button>
+                        <button class="btn btn-warning" type="button" onclick="ClusterInfo.confirmedRemoveTopic();">Remove topic</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</section>
+
+</body>
+</html>

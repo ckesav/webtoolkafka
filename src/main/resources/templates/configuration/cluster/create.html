@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html
+        xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+        xmlns:th="http://www.thymeleaf.org"
+        layout:decorate="~{layout}">
+
+<head>
+    <title>Cluster Configuration</title>
+</head>
+
+<body>
+<section layout:fragment="content">
+    <script type="application/javascript">
+        // On ready register handlers
+        jQuery(document).ready(function() {
+            jQuery('#ssl').click(function() {
+                var isChecked = jQuery('#ssl').is(':checked');
+                jQuery('#ssl-options').toggle(isChecked);
+
+                // If SASL is enabled, we hide SSL Keystore options
+                // If SASL is disabled, we show SSL Keystore options.
+                var isSaslChecked = jQuery('#sasl').is(':checked');
+                jQuery('#ssl-keystore-options').toggle(!isSaslChecked);
+            });
+            jQuery('#useTrustStore').click(function() {
+                var isChecked = jQuery('#useTrustStore').is(':checked');
+                jQuery('#ssl-truststore-options').toggle(isChecked);
+            });
+            jQuery('#sasl').click(function() {
+                var isChecked = jQuery('#sasl').is(':checked');
+
+                // Toggle SASL Options on/off
+                jQuery('#sasl-options').toggle(isChecked);
+
+                // If SASL is enabled, we hide SSL Keystore options
+                // If SASL is disabled, we show SSL Keystore options.
+                jQuery('#ssl-keystore-options').toggle(!isChecked);
+            });
+            jQuery('#saslMechanism').change(function() {
+                var selected = jQuery(this).val();
+                if (selected == "custom") {
+                    // Show custom mechanism input
+                    jQuery('#saslCustomMechanism').toggle(true);
+                } else {
+                    // Hide custom mechanism input
+                    jQuery('#saslCustomMechanism').toggle(false);
+                }
+
+                if (selected == "PLAIN") {
+                    jQuery('#sasl-plain-jaas').toggle(true);
+                    jQuery('#sasl-custom-jaas').toggle(false);
+                } else {
+                    jQuery('#sasl-plain-jaas').toggle(false);
+                    jQuery('#sasl-custom-jaas').toggle(true);
+                }
+            });
+        });
+    </script>
+
+    <div class="container">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <strong th:text="${clusterForm.exists()} ? 'Edit' : 'Create'">Create</strong>
+                        <span th:text="${clusterForm.exists()} ? ${clusterForm.name} : 'New Cluster'"></span>
+                    </div>
+                    <form
+                        enctype="multipart/form-data" method="post" class="form-horizontal"
+                        th:action="@{/configuration/cluster/update}" th:object="${clusterForm}">
+                        <div class="card-body">
+                            <!-- Name -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="name">
+                                    Cluster Name
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="name" name="name" class="form-control" type="text"
+                                        placeholder="A unique name to identify this cluster"
+                                        th:errorclass="is-invalid"
+                                        th:value="*{name}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('name')}" th:errors="*{name}"/>
+                                </div>
+                            </div>
+
+                            <!-- Brokers -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="brokers">
+                                    Brokers
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="brokers" name="brokers" class="form-control" type="text"
+                                        placeholder="Comma separated list of brokers.  hostname1:9092,hostname2:9092"
+                                        th:errorclass="is-invalid"
+                                        th:field="*{brokerHosts}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('brokerHosts')}" th:errors="*{brokerHosts}"/>
+                                </div>
+                            </div>
+
+                            <h6>SSL Settings</h6>
+                            <hr>
+
+                            <!-- Use SSL -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="ssl">
+                                    Use SSL authentication?
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="ssl" name="ssl" class="" type="checkbox"
+                                        th:errorclass="is-invalid"
+                                        th:field="*{ssl}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('ssl')}" th:errors="*{ssl}"/>
+                                </div>
+                            </div>
+
+                            <!-- SSL Options -->
+                            <div id="ssl-options" th:styleappend="${clusterForm.getSsl()} ? 'display: block;' : 'display: none;'">
+                                <!-- Do you require upload of additional truststore? -->
+                                <div class="form-group row">
+                                    <label class="col-md-3 form-control-label" for="useTrustStore">
+                                        Upload truststore?
+                                    </label>
+                                    <div class="col-md-9">
+                                        <input
+                                            id="useTrustStore" name="useTrustStore" class="" type="checkbox"
+                                            th:errorclass="is-invalid"
+                                            th:field="*{useTrustStore}">
+
+                                        <small class="form-text text-muted">
+                                            Only required if the certificate served by your cluster is not registered with an accessible certificate authority (CA), or
+                                            if the cluster's certificate has not already been registered in your
+                                            JVM's default truststore<span th:if="${defaultTrustStore} == null">.</span>
+                                            <span th:if="${defaultTrustStore} != null"> at <i>[[${defaultTrustStore}]]</i></span>
+                                        </small>
+                                    </div>
+                                </div>
+
+                                <!-- Only display if trust store is configured -->
+                                <div id="ssl-truststore-options" th:styleappend="${clusterForm.hasTrustStoreFilename()} ? 'display: block;' : 'display: none;'">
+
+                                    <!-- Trust Store file -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="trustStoreFile">
+                                            Trust Store
+                                            <div
+                                                th:if="${clusterForm.getTrustStoreFilename()} != null"
+                                                th:text="'Current: ' + ${clusterForm.getTrustStoreFilename()}">
+                                            </div>
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="trustStoreFile" name="trustStoreFile" class="form-control" type="file"
+                                                placeholder="Select TrustStore JKS"
+                                                th:errorclass="is-invalid"
+                                                th:value="*{trustStoreFile}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('trustStoreFile')}" th:errors="*{trustStoreFile}"/>
+                                            <small class="form-text text-muted" th:if="${clusterForm.getTrustStoreFilename()} != null">
+                                                Leave empty to continue using previously uploaded TrustStore.
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    <!-- Trust Store Password -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="trustStorePassword">
+                                            Trust Store Password
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="trustStorePassword" name="trustStorePassword" class="form-control" type="password"
+                                                placeholder="TrustStore password"
+                                                th:errorclass="is-invalid"
+                                                th:value="*{trustStorePassword}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('trustStorePassword')}" th:errors="*{trustStorePassword}"/>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Client KeyStore file -->
+                                <div id="ssl-keystore-options" th:styleappend="${clusterForm.getSsl() && !clusterForm.getSasl()} ? 'display: block;' : 'display: none;'">
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="keyStoreFile">
+                                            Key Store JKS
+                                            <div
+                                                th:if="${clusterForm.getKeyStoreFilename()} != null"
+                                                th:text="'Current: ' + ${clusterForm.getKeyStoreFilename()}">
+                                            </div>
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="keyStoreFile" name="keyStoreFile" class="form-control" type="file"
+                                                placeholder="Select KeyStore JKS"
+                                                th:errorclass="is-invalid"
+                                                th:value="*{keyStoreFile}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('keyStoreFile')}" th:errors="*{keyStoreFile}"/>
+                                        </div>
+                                    </div>
+
+                                    <!-- Client KeyStore Password -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="keyStorePassword">
+                                            Key Store Password
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="keyStorePassword" name="keyStorePassword" class="form-control" type="password"
+                                                placeholder="Key Store password"
+                                                th:errorclass="is-invalid"
+                                                th:value="*{keyStorePassword}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('keyStorePassword')}" th:errors="*{keyStorePassword}"/>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h6>SASL Settings</h6>
+                            <hr>
+
+                            <!-- Use SASL -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="sasl">
+                                    Use SASL authentication?
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="sasl" name="sasl" class="" type="checkbox"
+                                        th:errorclass="is-invalid"
+                                        th:field="*{sasl}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('sasl')}" th:errors="*{sasl}"/>
+                                </div>
+                            </div>
+
+                            <!-- SASL Options -->
+                            <div id="sasl-options" th:styleappend="${clusterForm.getSasl()} ? 'display: block;' : 'display: none;'">
+                                <!-- Mechanism -->
+                                <div class="form-group row">
+                                    <label class="col-md-3 form-control-label" for="saslMechanism">
+                                        SASL Mechanism
+                                    </label>
+                                    <div class="col-md-9">
+                                        <select
+                                            id="saslMechanism" name="saslMechanism" class="form-control"
+                                            th:errorclass="is-invalid"
+                                            th:field="*{saslMechanism}">
+                                            <option value="PLAIN">PLAIN</option>
+                                            <option value="GSSAPI">GSSAPI (Kerberos)</option>
+                                            <option value="custom">Other...</option>
+                                        </select>
+                                        <input
+                                            id="saslCustomMechanism" name="saslCustomMechanism" class="form-control"
+                                            placeholder="Enter custom SASL mechanism name"
+                                            th:errorclass="is-invalid"
+                                            th:field="*{saslCustomMechanism}"
+                                            th:styleappend="${clusterForm.isCustomSaslMechanism()} ? 'display: block;' : 'display: none;'">
+                                        <div class="invalid-feedback" th:if="${#fields.hasErrors('saslMechanism')}" th:errors="*{saslMechanism}"/>
+                                    </div>
+                                </div>
+
+                                <!-- SASL Plain Values -->
+                                <div id="sasl-plain-jaas" th:styleappend="${clusterForm.isPlainSaslMechanism()} ? 'display: block;' : 'display: none;'">
+                                    <!-- SASL Plain Username -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="saslUsername">
+                                            SASL Username
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="saslUsername" name="saslUsername" class="form-control" type="text"
+                                                placeholder="SASL Username"
+                                                th:errorclass="is-invalid"
+                                                th:value="*{saslUsername}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('saslUsername')}" th:errors="*{saslUsername}"/>
+                                        </div>
+                                    </div>
+
+                                    <!-- SASL Plain Password -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="saslPassword">
+                                            SASL Password
+                                        </label>
+                                        <div class="col-md-9">
+                                            <input
+                                                id="saslPassword" name="saslPassword" class="form-control" type="password"
+                                                placeholder=""
+                                                th:errorclass="is-invalid"
+                                                th:value="*{saslPassword}">
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('saslPassword')}" th:errors="*{saslPassword}"/>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- SASL Custom Values -->
+                                <div id="sasl-custom-jaas" th:styleappend="${!clusterForm.isPlainSaslMechanism()} ? 'display: block;' : 'display: none;'">
+                                    <!-- Enter custom JAAS Config -->
+                                    <div class="form-group row">
+                                        <label class="col-md-3 form-control-label" for="saslPassword">
+                                            SASL JAAS Configuration
+                                        </label>
+                                        <div class="col-md-9">
+                                            <textarea
+                                                id="saslCustomJaas" name="saslCustomJaas" class="form-control" type="text" th:rows="7"
+                                                placeholder=""
+                                                th:errorclass="is-invalid"
+                                                th:field="*{saslCustomJaas}"></textarea>
+                                            <div class="invalid-feedback" th:if="${#fields.hasErrors('saslCustomJaas')}" th:errors="*{saslCustomJaas}"/>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h6>
+                                Custom Client Properties
+                            </h6>
+                            <hr>
+
+                            <!-- Use Custom Client Options -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="useCustomOptions">
+                                    Use custom client settings?
+                                </label>
+                                <div class="col-md-9">
+                                     <!-- th:checked="${!clusterForm.getCustomOptionsAsMap().entrySet().isEmpty()}" -->
+                                    <input
+                                        id="useCustomOptions" name="useCustomOptions"
+                                        class="" type="checkbox"
+                                        th:errorclass="is-invalid"
+                                        th:field="*{customOptionsEnabled}">
+
+                                    <small class="form-text text-muted">
+                                        Use with care. Setting values here may overwrite values set by Kafka Webview and interfere with Kafka WebView's ability
+                                        to correctly communicate with your cluster.
+                                    </small>
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('customOptionsEnabled')}" th:errors="*{customOptionsEnabled}"/>
+                                </div>
+                            </div>
+
+                            <!-- Custom Options -->
+                            <div id="custom-options" th:styleappend="${clusterForm.getCustomOptionsEnabled()} ? 'display: block;' : 'display: none;'">
+
+                                <!-- Defined Options -->
+                                <div id="optionsContainer">
+                                    <!-- Loop over each option -->
+                                    <div class="form-group row custom-option" th:each="optionEntry : ${clusterForm.getCustomOptionsAsMap().entrySet()}">
+                                        <label class="col-md-3 form-control-label">
+                                            <i th:text="${optionEntry.getKey()}"></i>
+                                        </label>
+                                        <div class="col-md-8">
+                                            <input
+                                                th:value="${optionEntry.getValue()}"
+                                                type="text" name="customOptionValues" class="form-control"
+                                                placeholder="Set property value">
+                                            <input
+                                                th:value="${optionEntry.getKey()}"
+                                                type="hidden" name="customOptionNames">
+                                        </div>
+                                        <div class="col-md-1">
+                                            <button class="btn btn-sm removeOption" type="button" onclick="removeOption(this);">
+                                                <i class="fa fa-minus"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <!-- Dynamic Properties -->
+                                <div class="form-group row">
+                                    <label class="col-md-3 form-control-label" for="newOption">
+                                        Add new property
+                                    </label>
+                                    <div class="col-md-8">
+                                        <select name="kafka-property-select" id="kafka-property-select" class="form-control">
+                                            <option value=""></option>
+                                            <optgroup label="Custom">
+                                                <option value="-1">Other...</option>
+                                            </optgroup>
+                                            <optgroup
+                                                th:each="kafkaSetting : ${kafkaSettings}"
+                                                th:label="${kafkaSetting.getGroup()}">
+                                                <option
+                                                    th:each="kafkaKey : ${kafkaSetting.getKeys()}"
+                                                    th:value="${kafkaKey}"
+                                                    th:text="${kafkaKey}">
+                                                </option>
+                                            </optgroup>
+                                        </select>
+                                        <input
+                                            autocomplete="off" class="form-control d-none" id="newOption" name="newOption" type="text"
+                                            placeholder="Enter property name"/>
+                                    </div>
+                                    <div class="col-md-1">
+                                        <div class="btn-group btn-group-sm" role="group">
+                                            <button id="addOption" class="btn btn-sm add-more" type="button">
+                                                <i class="fa fa-plus"></i>
+                                            </button>
+                                            <button id="resetOption" class="btn btn-sm add-more d-none" type="button">
+                                                <i class="fa fa-reply"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card-footer">
+                            <input type="hidden" name="id" th:if="${clusterForm.exists()}" th:field="*{id}"></input>
+                            <button type="submit" class="btn btn-sm btn-primary">
+                                <i class="fa fa-dot-circle-o"></i>
+                                Submit
+                            </button>
+                            <a class="btn btn-sm btn-danger" th:href="@{/configuration/cluster}" role="button">
+                                <i class="fa fa-ban"></i>
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Client Settings JS -->
+    <script type="application/javascript">
+        jQuery().ready(function() {
+            jQuery('#useCustomOptions').click(function() {
+                var isChecked = jQuery('#useCustomOptions').is(':checked');
+                jQuery('#custom-options').toggle(isChecked);
+            });
+
+            jQuery('#kafka-property-select').change(function(e) {
+                var val = jQuery('#kafka-property-select').val();
+                console.log("Value: " + val);
+                if (val == -1) {
+                    console.log("Showing input");
+                    // Show input box
+                    jQuery('#newOption').toggleClass('d-none');
+                    jQuery('#kafka-property-select').toggleClass('d-none');
+                    jQuery('#resetOption').toggleClass('d-none');
+                } else {
+                    // Hide Input box?
+                    console.log("Showing select");
+                }
+            })
+
+            jQuery('#resetOption').click(function(e) {
+                // Reset
+                resetOptions();
+            });
+
+            jQuery('#addOption').click(function(e) {
+                e.preventDefault();
+
+                // Get and compile template
+                var source   = jQuery('#options-template').html();
+                var template = Handlebars.compile(source);
+
+                // Determine which input to select from
+                var optionName = null;
+                if (jQuery('#kafka-property-select').val() == -1) {
+                    // Get name from input
+                    optionName = jQuery('#newOption').val();
+                } else if (jQuery('#kafka-property-select').val() !== "") {
+                    optionName = jQuery('#kafka-property-select').val();
+                }
+
+                if (optionName == null || optionName.trim().length == 0) {
+                    alert('Must enter a name for property');
+                    return;
+                }
+
+                // Generate html from template
+                var properties = {
+                    optionName: optionName,
+                    optionValueFieldName: "",
+                    optionNameFieldName: "customOptionNames"
+                };
+                var optionsHtml = template(properties);
+
+                // Append it to our div
+                jQuery('#optionsContainer').append(optionsHtml);
+
+                // Reset
+                resetOptions();
+            });
+        });
+
+        function resetOptions() {
+            // Reset visibility.
+            jQuery('#newOption').addClass('d-none');
+            jQuery('#kafka-property-select').removeClass('d-none');
+            jQuery('#resetOption').addClass('d-none');
+
+            // Reset inputs
+            jQuery('#newOption').val('');
+            jQuery('#kafka-property-select').val('');
+        }
+
+        // Handle removing custom options
+        function removeOption(element) {
+            if (confirm('Are you sure you want to remove this property?')) {
+                jQuery(element).closest('.custom-option').remove();
+            }
+        }
+    </script>
+
+    <!-- Options Template -->
+    <script id="options-template" type="text/x-handlebars-template">
+        <!-- User Defined Option -->
+        <div class="form-group row custom-option">
+            <label class="col-md-3 form-control-label">
+                <i>{{optionName}}</i>
+            </label>
+            <div class="col-md-8">
+                <input
+                    type="text" name="customOptionValues" class="form-control"
+                    placeholder="Set property value">
+                <input
+                    type="hidden" name="customOptionNames" value="{{optionName}}">
+            </div>
+            <div class="col-md-1">
+                <button class="btn btn-sm removeOption" type="button" onclick="removeOption(this);">
+                    <i class="fa fa-minus"></i>
+                </button>
+            </div>
+        </div>
+    </script>
+</section>
+
+</body>
+</html>

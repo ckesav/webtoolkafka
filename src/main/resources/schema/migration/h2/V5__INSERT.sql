@@ -1,0 +1,1 @@
+insert into cluster(id,name,broker_hosts,is_ssl_enabled) values (1,'home','localhost:9090',true)

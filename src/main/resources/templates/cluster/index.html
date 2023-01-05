@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html
+    xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+    xmlns:th="http://www.thymeleaf.org"
+    layout:decorate="~{layout}">
+
+<head>
+    <title>Clusters</title>
+</head>
+
+<body>
+<section layout:fragment="content">
+    <div class="container">
+
+        <!-- If we have no clusters at all, render inline help -->
+        <th:block th:if="${hasNoClusters}">
+            <div th:replace="fragments/noKafkaClustersFound :: display()">
+                <!-- Display no kafka clusters found -->
+            </div>
+        </th:block>
+
+        <!-- Render datatable if we have one or more clusters. -->
+        <th:block th:if="${hasClusters}">
+            <div th:replace="fragments/datatable/Datatable :: display(${datatable})"></div>
+        </th:block>
+    </div>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html
+    xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+    xmlns:th="http://www.thymeleaf.org"
+    layout:decorate="~{layout}">
+<head>
+    <title th:text="'Streaming ' + ${view.name}"></title>
+</head>
+
+<body>
+<!-- Main Content -->
+<section layout:fragment="content">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa fa-align-justify"></i>
+                        Stream <strong th:text="${view.name}"></strong> over topic <strong th:text="${view.topic}"></strong>
+
+                        <!-- Link to Browse -->
+                        <div class="btn-group float-right" role="group" aria-label="Button group">
+                            <a class="btn" th:href="@{/view/{id}(id=${view.id})}" style="padding-bottom: 0;">
+                                <i class="icon-eye"></i>
+                                &nbsp;Switch to View
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body overflow-scroll">
+
+                        <!-- Stream Controls -->
+                        <div class="row">
+                            <div class="col-md-6">
+                                <form class="form-inline">
+                                    <div class="form-group">
+                                        <label for="connect" style="padding-right: 15px;">Stream Connection: </label>
+                                        <button id="connect" class="btn btn-sm btn-default" type="submit">Connect</button>
+                                        <button id="pause" class="btn btn-sm btn-default" type="submit" disabled="disabled">Pause</button>
+                                        <button id="resume" class="btn btn-sm btn-default" type="submit" disabled="disabled">Resume</button>
+                                        <button id="disconnect" class="btn btn-sm btn-default" type="submit" disabled="disabled">Disconnect</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div><br/>
+
+                        <!-- Show connect information -->
+                        <div class="row">
+                            <div class="col-md-12">
+                                <!-- No Results Found -->
+                                <div class="alert alert-light" role="alert" id="notConnected" style="display: block;">
+                                    <h4 class="alert-heading">Stream Disconnected</h4>
+                                    <p>
+                                        Review <i><strong>Stream Settings</strong></i> to alter behavior of consumer.<br/>
+                                        Press <i><strong>Connect</strong></i> to start the streaming consumer.<br/>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stream Results -->
+                        <div class="row">
+                            <div class="col-md-12">
+                                <table class="table table-bordered table-striped table-sm" id="results" style="display: none;">
+                                    <thead>
+                                    <tr>
+                                        <th>Partition</th>
+                                        <th>Offset</th>
+                                        <th>Timestamp</th>
+                                        <th>Key</th>
+                                        <th>Value</th>
+                                    </tr>
+                                    </thead>
+                                    <tbody id="results-tbody">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Javascript -->
+    <script type="application/javascript">
+        var SocketDetails = {
+            // Logged in userdId
+            userId: '[[${userId}]]',
+            viewId: '[[${view.id}]]',
+
+            // How many rows to display before removing the oldest
+            maxResults: 50,
+
+            // Holds results template
+            resultsTemplate: '',
+
+            // Holds reference to results table
+            resultsTable: null,
+
+            // Our stomp client
+            stompClient: null,
+
+            // Debug handler
+            stompDebug:  null,
+
+            // End point to connect
+            socketUrl: "[[@{/websocket}]]",
+
+            // End point to consume a view
+            consumerBaseUrl: "/user/topic/view",
+
+            // JSON Render settings.
+            useJsonRender: true,
+            jsonRenderToLevel: 1000,
+
+            getConsumerUrl : function() {
+                return SocketDetails.consumerBaseUrl + '/' + SocketDetails.viewId + '/' + SocketDetails.userId;
+            },
+
+            getSubscribeUrl: function() {
+                return '/websocket/consume/' + SocketDetails.viewId;
+            },
+
+            getPauseUrl: function() {
+                return '/websocket/pause/' + SocketDetails.viewId;
+            },
+
+            getResumeUrl: function() {
+                return '/websocket/resume/' + SocketDetails.viewId;
+            },
+
+            // Connect to web socket
+            connect: function() {
+                var socket = new SockJS(SocketDetails.socketUrl);
+                SocketDetails.stompClient = Stomp.over(socket);
+                SocketDetails.stompClient.debug = SocketDetails.stompDebug;
+                SocketDetails.stompClient.connect({}, function (frame) {
+                    SocketDetails.setConnected(true);
+
+                    // Request subscription
+                    SocketDetails.subscribeResults();
+                    SocketDetails.requestSubscription();
+                });
+            },
+
+            // Mark as connected
+            setConnected: function(connected) {
+                jQuery("#connect").prop("disabled", connected);
+                jQuery("#disconnect").prop("disabled", !connected);
+                if (connected) {
+                    // Hide not connected
+                    jQuery('#notConnected').toggle(false);
+
+                    // Disable Search Options
+                    jQuery('div#search-disabled').remove();
+                    jQuery('div#search').append('<div id="search-disabled" title="Cannot modify while connected to stream" style="cursor: no-drop; position: absolute; background-color: grey; top:0;left:0;width: 100%;height:100%;z-index:2;opacity:0.4;filter: alpha(opacity = 50)"></div>');
+
+                    // Show results
+                    jQuery('#results').toggle(true);
+
+                    jQuery('#resume').prop("disabled", true);
+                    jQuery('#pause').prop("disabled", false);
+                    jQuery("#results").show();
+                }
+                else {
+                    // Show not connected
+                    jQuery('#notConnected').toggle(true);
+
+                    // Show results
+                    jQuery('#results').toggle(false);
+
+                    jQuery('#resume').prop("disabled", true);;
+                    jQuery('#pause').prop("disabled", true);;
+                    jQuery("#results").hide();
+
+                    // Re-enable Search Options
+                    jQuery('div#search-disabled').remove();
+                }
+                jQuery("#results-tbody").html("");
+            },
+
+            // Disconnect from web socket
+            disconnect: function() {
+                if (SocketDetails.stompClient !== null) {
+                    SocketDetails.stompClient.disconnect();
+                }
+                SocketDetails.setConnected(false);
+                console.log("Disconnected");
+            },
+
+            // Pause the stream
+            pause: function() {
+                SocketDetails.stompClient.send(SocketDetails.getPauseUrl(), {}, JSON.stringify({}));
+
+                // Flip button state
+                $('#resume').prop("disabled", false);
+                $('#pause').prop("disabled", true);
+            },
+
+            // Pause the stream
+            resume: function() {
+                SocketDetails.stompClient.send(SocketDetails.getResumeUrl(), {}, JSON.stringify({}));
+
+                // Flip button state
+                $('#resume').prop("disabled", true);
+                $('#pause').prop("disabled", false);
+            },
+
+            // Subscribe to a specific view
+            requestSubscription: function() {
+                // Build request params
+                var params = {
+                    partitions: PartitionFilter.getToggledPartitions().join(),
+                    filters: RecordFilter.buildFilterParameters()
+                };
+
+                // Merge parameters with start position parameters.
+                jQuery.extend(params, SocketDetails.getStartPositionParams());
+
+                // Send request down websocket.
+                SocketDetails.stompClient.send(SocketDetails.getSubscribeUrl(), {}, JSON.stringify(params));
+            },
+
+            /**
+             * @returns String head/tail.
+             */
+            getStartPositionParams: function() {
+                var returnValue = {};
+                returnValue['action'] = 'tail';
+
+                var value = jQuery('#startPositionSelector').val();
+                if (value == 'head') {
+                    returnValue['action'] = 'head';
+                } else if (value == 'timestamp') {
+                    returnValue['action'] = 'timestamp';
+                    returnValue['timestamp'] = jQuery('#timestamp-seek').val();
+                }
+                return returnValue;
+            },
+
+            subscribeResults: function() {
+                var topic = SocketDetails.getConsumerUrl();
+                console.log("Subscribing to Topic " + topic);
+                SocketDetails.stompClient.subscribe(topic, function (incomingMessage) {
+                    var json = JSON.parse(incomingMessage.body);
+                    SocketDetails.appendResult(json);
+                });
+            },
+
+            // Append results to browser
+            appendResult: function(result) {
+                // Determine how to render key
+                var keyIsJson = false;
+                var key = result.key;
+
+                // Determine if result.value is a string, or JSON object
+                if (result.key instanceof Object && !(result.key instanceof String)) {
+                    // Use fancy json rendering.
+                    if (SocketDetails.useJsonRender) {
+                        keyIsJson = true;
+                    } else {
+                        // Convert to String
+                        key = JSON.stringify(result.key);
+                    }
+                }
+
+                // Determine how to render value
+                var valueIsJson = false;
+                var value = result.value;
+
+                // Determine if result.value is a string, or JSON object
+                if (result.value instanceof Object && !(result.value instanceof String)) {
+                    // Use fancy json rendering.
+                    if (SocketDetails.useJsonRender) {
+                        valueIsJson = true;
+                    } else {
+                        // Convert to String
+                        value = JSON.stringify(result.value);
+                    }
+                }
+
+                // Generate html from template
+                var properties = {
+                    partition: result.partition,
+                    offset: result.offset,
+                    key: key,
+                    keyIsJson: keyIsJson,
+                    value: value,
+                    valueIsJson: valueIsJson,
+                    timestamp: result.timestamp,
+                    date: DateTools.displayTimestamp(result.timestamp),
+                    timezone: DateTools.localTimezone,
+                    showPrettyDates: ViewDetails.displayPrettyDates()
+                };
+                var resultHtml = SocketDetails.resultsTemplate(properties);
+
+                // Prepend it to the top of our table
+                SocketDetails.resultsTable.prepend(resultHtml);
+
+                // If json, generate formatted json
+                if (keyIsJson) {
+                    jQuery("td#key-" + result.partition + "-" + result.offset).html(renderjson(result.key));
+                }
+                if (valueIsJson) {
+                    jQuery("td#value-" + result.partition + "-" + result.offset).html(renderjson(result.value));
+                }
+
+                // Remove rows > max results from the end
+                var resultRows = SocketDetails.resultsTable.children();
+                if (resultRows.length > SocketDetails.maxResults) {
+                    resultRows.last().remove();
+                }
+            }
+        };
+
+        jQuery(function () {
+            // Get and compile template
+            var source   = jQuery('#results-template').html();
+            var template = Handlebars.compile(source);
+            SocketDetails.resultsTable = jQuery('#results-tbody');
+            SocketDetails.resultsTemplate = template;
+
+            // Setup event handlers
+            jQuery("form").on('submit', function (e) {
+                e.preventDefault();
+            });
+            jQuery( "#connect" ).click(function() { SocketDetails.connect(); });
+            jQuery( "#disconnect" ).click(function() { SocketDetails.disconnect(); });
+            jQuery( "#pause" ).click(function() {
+                SocketDetails.pause();
+            });
+            jQuery( "#resume" ).click(function() {
+                SocketDetails.resume();
+            });
+
+            /**
+             * Handles changing the start position select box, and showing the appropriate options
+             * for the selected value.
+             */
+            jQuery('#startPositionSelector').change(function(event) {
+                renderjson.set_show_to_level(SocketDetails.jsonRenderToLevel);
+
+                var selected = jQuery(this).val();
+
+                // Hide all options
+                jQuery('.startingPositionOptions').toggle(false);
+
+                if (selected == "timestamp") {
+                    jQuery('#timestampOptions').toggle(true);
+                } else if (selected == "offsets") {
+                    jQuery('#offsetsOptions').toggle(true);
+                }
+            });
+        });
+    </script>
+
+    <!-- Results Template -->
+    <script id="results-template" type="text/x-handlebars-template">
+        <tr>
+            <td>{{partition}}</td>
+            <td>{{offset}}</td>
+            <td>
+                {{#if showPrettyDates}}
+                <span class="date" title="{{timezone}}">{{date}}</span>
+                {{else}}
+                <span class="timestamp" title="{{date}}">{{timestamp}}</span>
+                {{/if}}
+            </td>
+            <td id="key-{{partition}}-{{offset}}">
+                {{#unless keyIsJson }}<pre>{{key}}</pre>{{/unless}}
+            </td>
+            <td id="value-{{partition}}-{{offset}}">
+                {{#unless valueIsJson }}<pre>{{value}}</pre>{{/unless}}
+            </td>
+        </tr>
+    </script>
+</section>
+
+<!-- Right Side Menu -->
+<aside layout:fragment="aside-menu">
+    <!-- Menu -->
+    <ul class="nav nav-tabs" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" data-toggle="tab" href="#viewInfo" role="tab"><i class="icon-list"></i></a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-toggle="tab" href="#search" role="tab"><i class="icon-magnifier"></i></a>
+        </li>
+    </ul>
+
+    <!-- Tab panes -->
+    <div class="tab-content">
+        <!-- View Details -->
+        <div
+            th:replace="fragments/viewDetails :: viewDetails (view=${view},cluster=${view.cluster})">
+        </div>
+
+        <!-- Search & Filtering-->
+        <div class="tab-pane" id="search" role="tabpanel">
+            <div class="callout m-0 py-2 text-muted text-center bg-light text-uppercase">
+                <small><b>Search and Filtering</b>
+                </small>
+            </div>
+            <hr class="transparent mx-3 my-0">
+
+            <!-- Starting Position-->
+            <hr class="mx-3 my-0">
+            <div class="callout callout-info m-0 py-3">
+                <div>
+                    <div
+                        style="cursor: pointer;"
+                        data-toggle="collapse"
+                        href="#collapseStartingPosition"
+                        aria-expanded="false" aria-controls="collapseStartingPosition">
+                        <strong>Starting Position</strong>
+                    </div>
+                    <div class="collapse" id="collapseStartingPosition">
+                        <div class="form-group">
+                            <label for="startPositionSelector">
+                                Position to stream from:
+                            </label>
+                            <select id="startPositionSelector" class="form-control">
+                                <option value="tail">Tail</option>
+                                <option value="head">Head</option>
+                                <option value="timestamp">Timestamp</option>
+                                <!--<option value="offsets">Offsets</option>-->
+                            </select>
+                        </div>
+                        <div id="timestampOptions" class="startingPositionOptions" style="display: none;">
+                            <div
+                                th:replace="fragments/consumerSetting/timestampSeek :: timestampSeek(showButton=false)">
+                            </div>
+                        </div>
+                        <div id="offsetsOptions" class="startingPositionOptions" style="display: none;">
+                            offsets options
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <hr class="mx-3 my-0">
+
+            <!-- Partition Filter -->
+            <div
+                th:replace="fragments/consumerSetting/partitionFilter :: partitionFilter (showApplyButton=false)">
+            </div>
+
+            <!-- Record Filters -->
+            <div
+                th:replace="fragments/consumerSetting/recordFilter :: recordFilter (view=${view},showApplyButton=false)">
+            </div>
+
+        </div>
+    </div>
+</aside>
+
+<!-- Show Settings Link -->
+<section
+    layout:fragment="breadcrumb-menu"
+    th:insert="fragments/breadCrumbMenuToggle :: menuLink (linkText='Stream Settings')">
+</section>
+
+</body>
+</html>

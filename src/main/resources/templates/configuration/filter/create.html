@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html
+    xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+    xmlns:th="http://www.thymeleaf.org"
+    layout:decorate="~{layout}">
+
+<head>
+    <title>Filter Configuration</title>
+</head>
+
+<body>
+<section layout:fragment="content">
+    <div class="container">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <strong th:text="${filterForm.exists()} ? 'Edit' : 'Create'">Create</strong>
+                        <span th:text="${filterForm.exists()} ? ${filterForm.name} : 'New Filter'"></span>
+                    </div>
+                    <form
+                        th:action="@{/configuration/filter/update}"
+                        th:object="${filterForm}"
+                        id="filter-form" method="post" class="form-horizontal" enctype="multipart/form-data">
+                        <div class="card-body">
+                            <!-- Name -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="name">
+                                    Filter Name
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="name" name="name" class="form-control" type="text"
+                                        placeholder="A unique name to identify this filter"
+                                        th:errorclass="is-invalid"
+                                        th:value="*{name}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('name')}" th:errors="*{name}"/>
+                                </div>
+                            </div>
+
+                            <!-- Jar Upload -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="file">
+                                    Jar upload
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="file" name="file" class="form-control" type="file"
+                                        placeholder="Select a jar to upload"
+                                        th:errorclass="is-invalid"
+                                        th:value="*{file}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('file')}" th:errors="*{file}"/>
+                                </div>
+                            </div>
+
+                            <!-- Fully qualified class name -->
+                            <div class="form-group row">
+                                <label class="col-md-3 form-control-label" for="classpath">
+                                    Fully qualified class name
+                                </label>
+                                <div class="col-md-9">
+                                    <input
+                                        id="classpath" name="classpath" class="form-control" type="text"
+                                        placeholder="Fully qualified class name for record filter implementation"
+                                        th:errorclass="is-invalid"
+                                        th:field="*{classpath}">
+                                    <div class="invalid-feedback" th:if="${#fields.hasErrors('classpath')}" th:errors="*{classpath}"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-footer">
+                            <input type="hidden" name="id" th:if="${filterForm.exists()}" th:field="*{id}">
+                            <button type="submit" class="btn btn-sm btn-primary">
+                                <i class="fa fa-dot-circle-o"></i>
+                                Submit
+                            </button>
+                            <a class="btn btn-sm btn-danger" th:href="@{/configuration/filter}" role="button">
+                                <i class="fa fa-ban"></i>
+                                Cancel
+                            </a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+</body>
+</html>

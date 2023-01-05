@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html
+    xmlns:layout="http://www.ultraq.net.nz/thymeleaf/layout"
+    xmlns:th="http://www.thymeleaf.org"
+    layout:decorate="~{layout}">
+
+<head>
+    <title>View</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+</head>
+
+<body>
+<section layout:fragment="content">
+    <div class="container">
+        <script type="application/javascript">
+            // Maintains state of our consumer
+            var ConsumerInfo = {
+                // Consumer State
+                direction: 'next',
+                searchQueryCount: 0,
+
+                // View Options
+                viewId: '[[${view.id}]]',
+                formatDates: true,
+                resultsPerPartition: '[[${view.resultsPerPartition}]]',
+
+                // JSON Render settings.
+                useJsonRender: true,
+                jsonRenderToLevel: 1000
+            };
+
+            // On load, fire off ajax request to load results.
+            jQuery(document).ready(function() {
+                renderjson.set_show_to_level(ConsumerInfo.jsonRenderToLevel);
+
+                // Fire off initial consume request
+                executeConsume('next');
+
+                // Control Events
+                jQuery('#control-head').click(function() {
+                    executeConsume('head');
+                });
+
+                jQuery('#control-previous').click(function() {
+                    executeConsume('previous');
+                });
+
+                jQuery('#control-next').click(function() {
+                    executeConsume('next');
+                });
+
+                jQuery('#control-tail').click(function() {
+                    executeConsume('tail');
+                });
+
+                jQuery('#cancelSearch').click(function() {
+                    ConsumerInfo.cancelSearch = true;
+                });
+
+                /**
+                 * Called when you flip the date format switch
+                 */
+                jQuery('#dateFormatToggle').change(function() {
+                    ConsumerInfo.formatDates = ViewDetails.displayPrettyDates();
+
+                    // Reload results by calling previous + cancelSearch
+                    ConsumerInfo.cancelSearch = true;
+                    executeConsume('previous');
+                });
+
+                jQuery('#timestamp-seek-button').click(function() {
+                    var timestamp = jQuery('#timestamp-seek').val();
+                    ApiClient.seekTimestamp(ConsumerInfo.viewId, timestamp, handleSeekResults);
+                });
+
+                jQuery('#toggleStateEditor').click(function() {
+                    var rows = jQuery('#consumerState-details tr');
+                    var inputs = jQuery(rows).find('input');
+
+                    if (inputs.length > 0) {
+                        // Check text to edit
+                        jQuery(this).val("Edit");
+
+                        var partitionOffsetMap = {};
+                        jQuery.each(inputs, function() {
+                           var partition = jQuery(this).attr('name');
+                           var offset = jQuery(this).val();
+
+                           // Build map
+                           partitionOffsetMap[partition] = offset;
+                        });
+                        partitionOffsetMapJson = JSON.stringify(partitionOffsetMap);
+
+                        // Call api
+                        ApiClient.setConsumerState(ConsumerInfo.viewId, partitionOffsetMapJson, handleSeekResults);
+                    } else {
+                        // Change Text to Save
+                        jQuery(this).val("Save");
+
+                        jQuery.each(rows, function() {
+                            var partitionCell = this.childNodes[0];
+                            var offsetCell = this.childNodes[1];
+                            var partition = jQuery(partitionCell).html();
+
+                            // Convert to input
+                            var html = jQuery(offsetCell).html();
+                            var input = jQuery('<input type="text" size="5"/>');
+                            input.val(html);
+                            input.attr('name', partition);
+                            jQuery(offsetCell).html(input);
+                        });
+                    }
+                });
+            });
+
+            function handleSeekResults(results) {
+                // Update consumer state UI
+                updateConsumerState(results.offsets);
+
+                // Update consume results
+                executeConsume('next');
+            }
+
+            function executeConsume(action) {
+                // Hide table
+                jQuery('#results-table').toggle(false);
+                jQuery('#table-controls').toggle(false);
+
+                // Show loader
+                jQuery('#loader').toggle(true);
+
+                // Record state
+                ConsumerInfo.direction = action;
+
+                // Build request params
+                var params = {
+                    action: action,
+                    partitions: PartitionFilter.getToggledPartitions().join(),
+                    filters: RecordFilter.buildFilterParameters()
+                };
+
+                ApiClient.consume(ConsumerInfo.viewId, params, handleConsumeResults);
+            }
+
+            function handleConsumeResults(results) {
+                // Get and compile template
+                var source   = jQuery('#results-template').html();
+                var template = Handlebars.compile(source);
+                var table    = jQuery('#results-tbody');
+
+                // Update consumer state
+                updateConsumerState(results.consumerOffsets);
+
+                // Clear the results table
+                jQuery(table).empty();
+
+                // If we have no results
+                if (results.numberOfRecords === 0) {
+                    // Determine if we should re-consume
+                    return reconsume(results);
+                }
+
+                // Reset counter
+                ConsumerInfo.searchQueryCount = 0;
+                ConsumerInfo.cancelSearch = false;
+
+                // Loop over results
+                jQuery.each(results.results, function (index, result) {
+                    // Determine how to render key
+                    var keyIsJson = false;
+                    var key = result.key;
+
+                    // Determine if result.value is a string, or JSON object
+                    if (result.key instanceof Object && !(result.key instanceof String)) {
+                        // Use fancy json rendering.
+                        if (ConsumerInfo.useJsonRender) {
+                            keyIsJson = true;
+                        } else {
+                            // Convert to String
+                            key = JSON.stringify(result.key);
+                        }
+                    }
+
+                    // Determine how to render value
+                    var valueIsJson = false;
+                    var value = result.value;
+
+                    // Determine if result.value is a string, or JSON object
+                    if (result.value instanceof Object && !(result.value instanceof String)) {
+                        // Use fancy json rendering.
+                        if (ConsumerInfo.useJsonRender) {
+                            valueIsJson = true;
+                        } else {
+                            // Convert to String
+                            value = JSON.stringify(result.value);
+                        }
+                    }
+
+                    // Generate html from template
+                    var properties = {
+                        partition: result.partition,
+                        offset: result.offset,
+                        key: key,
+                        keyIsJson: keyIsJson,
+                        value: value,
+                        valueIsJson: valueIsJson,
+                        timestamp: result.timestamp,
+                        date: DateTools.displayTimestamp(result.timestamp),
+                        timezone: DateTools.localTimezone,
+                        showPrettyDates: ConsumerInfo.formatDates
+                    };
+                    var resultHtml = template(properties);
+
+                    // Append it to our table
+                    jQuery(table).append(resultHtml);
+
+                    // If json, generate formatted json
+                    if (keyIsJson) {
+                        jQuery("td#key-" + result.partition + "-" + result.offset).html(renderjson(result.key));
+                    }
+                    if (valueIsJson) {
+                        jQuery("td#value-" + result.partition + "-" + result.offset).html(renderjson(result.value));
+                    }
+                });
+
+                // Hide loader
+                jQuery('#loader').toggle(false);
+                jQuery('#searchingAlert').toggle(false);
+                jQuery('#noResultsFound').toggle(false);
+
+                // Show table
+                jQuery('#results-table').toggle(true);
+                jQuery('#table-controls').toggle(true);
+            }
+
+            function reconsume(results) {
+                // Flag to determine if we should keep paging
+                var hasMore = false;
+
+                // Build a map
+                var consumerOffsetsMap = [];
+                jQuery.each(results.consumerOffsets, function(index, partitionOffset) {
+                    consumerOffsetsMap[partitionOffset.partition] = partitionOffset.offset;
+                });
+
+                if (ConsumerInfo.direction == 'next') {
+                    jQuery.each(results.tailOffsets, function(index, partitionOffset) {
+                        var consumerOffset = consumerOffsetsMap[partitionOffset.partition];
+                        var tailOffset = partitionOffset.offset;
+
+                        if (consumerOffset < tailOffset) {
+                            // Set flag to true
+                            hasMore = true;
+
+                            // break out of loop
+                            return false;
+                        }
+                    });
+                } else if (ConsumerInfo.direction == 'previous') {
+                    jQuery.each(results.headOffsets, function(index, partitionOffset) {
+                        var consumerOffset = consumerOffsetsMap[partitionOffset.partition] - ConsumerInfo.resultsPerPartition;
+                        var headOffset = partitionOffset.offset;
+
+                        if (consumerOffset > headOffset) {
+                            // Set flag to true
+                            hasMore = true;
+
+                            // break out of loop
+                            return false;
+                        }
+                    });
+                }
+
+                if (ConsumerInfo.cancelSearch) {
+                    // If they canceled the search.
+                    showNoResultsFound('Middle');
+                } else if (hasMore) {
+                    console.log("REconsuming");
+                    // If we have more offsets to page through
+                    // Show in UI that we're searching..
+                    showStillSearching();
+
+                    // Fire next api call
+                    executeConsume(ConsumerInfo.direction);
+                } else {
+                    // Show in UI that no results found.
+                    var positionStr = 'Tail';
+                    if (ConsumerInfo.direction == 'previous' || ConsumerInfo.direction == 'head') {
+                        positionStr = 'Head';
+                    }
+                    showNoResultsFound(positionStr);
+                }
+            }
+
+            function showStillSearching() {
+                // Increment counter
+                ConsumerInfo.searchQueryCount++;
+                jQuery('#searchQueryCount').html(ConsumerInfo.searchQueryCount);
+                jQuery('#searchingAlert').toggle(true);
+                jQuery('#noResultsFound').toggle(false);
+            }
+
+            function showNoResultsFound(location) {
+                // Reset counter
+                ConsumerInfo.searchQueryCount = 0;
+                ConsumerInfo.cancelSearch = false;
+
+                // Hide loader
+                jQuery('#searchingAlert').toggle(false);
+                jQuery('#loader').toggle(false);
+
+                jQuery('#noResultsFoundDirection').html(location);
+                jQuery('#noResultsFound').toggle(true);
+                jQuery('#table-controls').toggle(true);
+            }
+
+            // Updates the consumer state UI
+            function updateConsumerState(consumerOffsets) {
+                // Change Icon to Edit
+                jQuery('#toggleStateEditor i').attr('class', 'icon-pencil');
+
+                // Update consumer state table
+                var consumerState = jQuery('#consumerState-details');
+
+                // Wipe Consumer State table
+                jQuery(consumerState).empty();
+
+                // This assumes we're in order
+                jQuery.each(consumerOffsets, function(index, partitionOffset) {
+                    jQuery(consumerState).append('<tr><td>' + partitionOffset.partition + '</td><td>' + partitionOffset.offset + '</td></tr>');
+                });
+            }
+        </script>
+        <div class="row">
+            <div class="col-lg-12">
+                <div class="card">
+                    <div class="card-header">
+                        <i class="fa fa-align-justify"></i>
+                        View <strong th:text="${view.name}"></strong> over topic <strong th:text="${view.topic}"></strong>
+
+                        <!-- Link to Stream -->
+                        <div class="btn-group float-right" role="group" aria-label="Button group">
+                            <a class="btn" th:href="@{/stream/{id}(id=${view.id})}" style="padding-bottom: 0;">
+                                <i class="icon-feed"></i>
+                                &nbsp;Switch to Stream
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body overflow-scroll">
+
+                        <!-- Display Loader First -->
+                        <div class="alert alert-light" role="alert" id="loader" style="display: block;">
+                            <div class="progress">
+                                <div
+                                    class="progress-bar progress-bar-striped progress-bar-animated"
+                                    role="progressbar" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"
+                                    style="width: 100%">
+                                </div>
+                            </div>
+                            <div id="searchingAlert" style="display: none;">
+                                <hr>
+                                <h3 class="mb-0" style="text-align: center;">
+                                    All results filtered... Searching...
+                                </h3>
+                                <h4 style="text-align: center;">
+                                    Query #<strong><span id="searchQueryCount">1</span></strong>
+                                    ( <a href="#" id="cancelSearch">cancel</a> )
+                                </h4>
+                            </div>
+                        </div>
+
+                        <!-- No Results Found -->
+                        <div class="alert alert-light" role="alert" id="noResultsFound" style="display: none;">
+                            <h4 class="alert-heading">No Results Found</h4>
+                            <p>Looks like we couldn't find any results!</p>
+                            <p>
+                                You're currently at the <strong><span id="noResultsFoundDirection"></span></strong> of the topic.
+                            </p>
+                        </div>
+
+                        <!-- Hide Results Table -->
+                        <table class="table table-bordered table-striped table-sm" id="results-table" style="display: none;">
+                            <thead>
+                            <tr>
+                                <th>Partition</th>
+                                <th>Offset</th>
+                                <th>Timestamp</th>
+                                <th>Key</th>
+                                <th>Value</th>
+                            </tr>
+                            </thead>
+                            <tbody id="results-tbody">
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Display Pager Controls -->
+                    <div class="card-footer" id="table-controls" style="display: none;">
+                        <ul class="pagination">
+                            <li class="page-item">
+                                <a class="page-link" href="#" id="control-head">
+                                    <i class="fa fa-fast-backward" aria-hidden="true"></i>
+                                    Head
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="#" id="control-previous">
+                                    <i class="fa fa-chevron-left" aria-hidden="true"></i>
+                                    Previous
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="#" id="control-next">
+                                    Next
+                                    <i class="fa fa-chevron-right" aria-hidden="true"></i>
+                                </a>
+                            </li>
+                            <li class="page-item">
+                                <a class="page-link" href="#" id="control-tail">
+                                    Tail
+                                    <i class="fa fa-fast-forward" aria-hidden="true"></i>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <!--/.col-->
+        </div>
+
+        <!-- Results Template -->
+        <script id="results-template" type="text/x-handlebars-template">
+            <tr>
+                <td>{{partition}}</td>
+                <td>{{offset}}</td>
+                <td>
+                    {{#if showPrettyDates}}
+                    <span class="date" title="{{timezone}}">{{date}}</span>
+                    {{else}}
+                    <span class="timestamp" title="{{date}}">{{timestamp}}</span>
+                    {{/if}}
+                </td>
+                <td id="key-{{partition}}-{{offset}}">
+                    {{#unless keyIsJson }}<pre>{{key}}</pre>{{/unless}}
+                </td>
+                <td id="value-{{partition}}-{{offset}}">
+                    {{#unless isJson }}<pre>{{value}}</pre>{{/unless}}
+                </td>
+            </tr>
+        </script>
+    </div>
+</section>
+
+<!-- Right Side Menu -->
+<aside layout:fragment="aside-menu">
+    <!-- Menu -->
+    <ul class="nav nav-tabs" role="tablist">
+        <li class="nav-item">
+            <a class="nav-link active" data-toggle="tab" href="#viewInfo" role="tab"><i class="icon-list"></i></a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link" data-toggle="tab" href="#search" role="tab"><i class="icon-magnifier"></i></a>
+        </li>
+    </ul>
+
+    <!-- Tab panes -->
+    <div class="tab-content">
+
+        <!-- View Details -->
+        <div
+            th:replace="fragments/viewDetails :: viewDetails (view=${view},cluster=${view.cluster})">
+        </div>
+
+        <!-- Search & Filtering-->
+        <div class="tab-pane" id="search" role="tabpanel">
+            <div class="callout m-0 py-2 text-muted text-center bg-light text-uppercase">
+                <small><b>Search and Filtering</b>
+                </small>
+            </div>
+            <hr class="transparent mx-3 my-0">
+
+            <!-- Consumer State -->
+            <hr class="transparent mx-3 my-0">
+            <div class="callout callout-info m-0 py-3">
+                <div
+                    style="cursor: pointer;"
+                    data-toggle="collapse"
+                    href="#collapseConsumerState"
+                    aria-expanded="false" aria-controls="collapseConsumerState">
+                    <strong>Consumer State</strong>
+                </div>
+                <div class="collapse" id="collapseConsumerState">
+                    <table class="table table-sm">
+                        <thead>
+                        <tr>
+                            <th>Partition</th>
+                            <th>
+                                Offset
+                            </th>
+                        </tr>
+                        </thead>
+                        <tbody id="consumerState-details">
+                        <tr>
+                            <td colspan="2">Loading...</td>
+                        </tr>
+                        </tbody>
+                        <tfoot>
+                        <tr>
+                            <td colspan="2" style="text-align: left;">
+                                <input type="button" value="Edit" id="toggleStateEditor"/>
+                            </td>
+                        </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+            <hr class="mx-3 my-0">
+
+            <!-- Timestamp Seek -->
+            <hr class="transparent mx-3 my-0">
+            <div class="callout callout-info m-0 py-3">
+                <div
+                    style="cursor: pointer;"
+                    data-toggle="collapse"
+                    href="#collapseTimestampSeek"
+                    aria-expanded="false" aria-controls="collapseTimestampSeek">
+                    <strong>Timestamp Seek</strong>
+                </div>
+                <div class="collapse" id="collapseTimestampSeek" th:include="fragments/consumerSetting/timestampSeek :: timestampSeek(showButton=true)">
+                    <table class="table table-sm">
+                        <tbody>
+                        <tr>
+                            <td colspan="2">Unix Timestamp</td>
+                        </tr>
+                        <tr>
+                            <td colspan="2">
+                                <input name="timestamp-seek" id="timestamp-seek" size="21">
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <input name="datetime-seek" id="datetime-seek" size="21" type="hidden">
+                            </td>
+                            <td>
+                                <input type="button" id="timestamp-seek-button" value="Seek">
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <hr class="mx-3 my-0">
+
+            <!-- Partition Filter -->
+            <div
+                th:replace="fragments/consumerSetting/partitionFilter :: partitionFilter(showApplyButton=true)">
+            </div>
+
+            <!-- Record Filters -->
+            <div
+                th:replace="fragments/consumerSetting/recordFilter :: recordFilter (view=${view},showApplyButton=true)">
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- Show Settings Link -->
+<section
+    layout:fragment="breadcrumb-menu"
+    th:insert="fragments/breadCrumbMenuToggle :: menuLink (linkText='View Settings')">
+</section>
+
+
+</body>
+</html>
